@@ -18,6 +18,7 @@ const (
 	attrItalic
 	attrBlink
 	attrWrap
+	attrFaint
 )
 
 const (
@@ -156,6 +157,12 @@ func (t *State) Cell(x, y int) Glyph {
 	return cell
 }
 
+// RawLines returns the backed lines slice without taking any locks. The caller
+// must ensure serialization if concurrent access is possible.
+func (t *State) RawLines() []line {
+	return t.lines
+}
+
 // Cursor returns the current position of the cursor.
 func (t *State) Cursor() Cursor {
 	return t.cur
@@ -268,13 +275,26 @@ func (t *State) setChar(c rune, attr *Glyph, x, y int) {
 	t.lines[y][x] = *attr
 	t.lines[y][x].Char = c
 	//if t.options.BrightBold && attr.Mode&attrBold != 0 && attr.FG < 8 {
-	if attr.Mode&attrBold != 0 && attr.FG < 8 {
+	if attr.Mode&attrBold != 0 && attr.Mode&attrFaint == 0 && attr.FG < 8 {
 		t.lines[y][x].FG = attr.FG + 8
+	}
+	if attr.Mode&attrFaint != 0 && attr.Mode&attrBold == 0 {
+		t.lines[y][x].FG = dimColor(attr.FG)
 	}
 	if attr.Mode&attrReverse != 0 {
 		t.lines[y][x].FG = attr.BG
 		t.lines[y][x].BG = attr.FG
 	}
+}
+
+func dimColor(c Color) Color {
+	if c >= DefaultFG {
+		return c
+	}
+	r := (c >> 16) & 0xff
+	g := (c >> 8) & 0xff
+	b := c & 0xff
+	return Color((r>>1)<<16 | (g>>1)<<8 | (b >> 1))
 }
 
 func (t *State) defaultCursor() Cursor {
@@ -611,11 +631,13 @@ func (t *State) setAttr(attr []int) {
 		a := attr[i]
 		switch a {
 		case 0:
-			t.cur.Attr.Mode &^= attrReverse | attrUnderline | attrBold | attrItalic | attrBlink
+			t.cur.Attr.Mode &^= attrReverse | attrUnderline | attrBold | attrItalic | attrBlink | attrFaint
 			t.cur.Attr.FG = DefaultFG
 			t.cur.Attr.BG = DefaultBG
 		case 1:
 			t.cur.Attr.Mode |= attrBold
+		case 2:
+			t.cur.Attr.Mode |= attrFaint
 		case 3:
 			t.cur.Attr.Mode |= attrItalic
 		case 4:
@@ -625,7 +647,7 @@ func (t *State) setAttr(attr []int) {
 		case 7:
 			t.cur.Attr.Mode |= attrReverse
 		case 21, 22:
-			t.cur.Attr.Mode &^= attrBold
+			t.cur.Attr.Mode &^= attrBold | attrFaint
 		case 23:
 			t.cur.Attr.Mode &^= attrItalic
 		case 24:

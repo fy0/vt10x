@@ -75,3 +75,22 @@ func TestIndexColor(t *testing.T) {
 		t.Fatal(attr.FG)
 	}
 }
+
+func TestSGRFaint(t *testing.T) {
+	term := New()
+	if _, err := term.Write([]byte("\033[32;2mF")); err != nil && err != io.EOF {
+		t.Fatal(err)
+	}
+	attr := term.Cell(0, 0)
+	if attr.Mode&attrFaint == 0 {
+		t.Fatal("expected faint attribute on cell")
+	}
+	base := byte2color(2)
+	r := (base >> 16) & 0xff
+	g := (base >> 8) & 0xff
+	b := base & 0xff
+	expected := Color((r>>1)<<16 | (g>>1)<<8 | (b >> 1))
+	if attr.FG != expected {
+		t.Fatalf("expected faint color %06x, got %06x", expected, attr.FG)
+	}
+}
