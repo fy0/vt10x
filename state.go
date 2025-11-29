@@ -11,14 +11,14 @@ const (
 )
 
 const (
-	attrReverse = 1 << iota
-	attrUnderline
-	attrBold
-	attrGfx
-	attrItalic
-	attrBlink
-	attrWrap
-	attrFaint
+	AttrReverse = 1 << iota
+	AttrUnderline
+	AttrBold
+	AttrGfx
+	AttrItalic
+	AttrBlink
+	AttrWrap
+	AttrFaint
 )
 
 const (
@@ -265,7 +265,7 @@ var gfxCharTable = [62]rune{
 }
 
 func (t *State) setChar(c rune, attr *Glyph, x, y int) {
-	if attr.Mode&attrGfx != 0 {
+	if attr.Mode&AttrGfx != 0 {
 		if c >= 0x41 && c <= 0x7e && gfxCharTable[c-0x41] != 0 {
 			c = gfxCharTable[c-0x41]
 		}
@@ -275,13 +275,13 @@ func (t *State) setChar(c rune, attr *Glyph, x, y int) {
 	t.lines[y][x] = *attr
 	t.lines[y][x].Char = c
 	//if t.options.BrightBold && attr.Mode&attrBold != 0 && attr.FG < 8 {
-	if attr.Mode&attrBold != 0 && attr.Mode&attrFaint == 0 && attr.FG < 8 {
+	if attr.Mode&AttrBold != 0 && attr.Mode&AttrFaint == 0 && attr.FG < 8 {
 		t.lines[y][x].FG = attr.FG + 8
 	}
-	if attr.Mode&attrFaint != 0 && attr.Mode&attrBold == 0 {
+	if attr.Mode&AttrFaint != 0 && attr.Mode&AttrBold == 0 {
 		t.lines[y][x].FG = dimColor(attr.FG)
 	}
-	if attr.Mode&attrReverse != 0 {
+	if attr.Mode&AttrReverse != 0 {
 		t.lines[y][x].FG = attr.BG
 		t.lines[y][x].BG = attr.FG
 	}
@@ -631,31 +631,31 @@ func (t *State) setAttr(attr []int) {
 		a := attr[i]
 		switch a {
 		case 0:
-			t.cur.Attr.Mode &^= attrReverse | attrUnderline | attrBold | attrItalic | attrBlink | attrFaint
+			t.cur.Attr.Mode &^= AttrReverse | AttrUnderline | AttrBold | AttrItalic | AttrBlink | AttrFaint
 			t.cur.Attr.FG = DefaultFG
 			t.cur.Attr.BG = DefaultBG
 		case 1:
-			t.cur.Attr.Mode |= attrBold
+			t.cur.Attr.Mode |= AttrBold
 		case 2:
-			t.cur.Attr.Mode |= attrFaint
+			t.cur.Attr.Mode |= AttrFaint
 		case 3:
-			t.cur.Attr.Mode |= attrItalic
+			t.cur.Attr.Mode |= AttrItalic
 		case 4:
-			t.cur.Attr.Mode |= attrUnderline
+			t.cur.Attr.Mode |= AttrUnderline
 		case 5, 6: // slow, rapid blink
-			t.cur.Attr.Mode |= attrBlink
+			t.cur.Attr.Mode |= AttrBlink
 		case 7:
-			t.cur.Attr.Mode |= attrReverse
+			t.cur.Attr.Mode |= AttrReverse
 		case 21, 22:
-			t.cur.Attr.Mode &^= attrBold | attrFaint
+			t.cur.Attr.Mode &^= AttrBold | AttrFaint
 		case 23:
-			t.cur.Attr.Mode &^= attrItalic
+			t.cur.Attr.Mode &^= AttrItalic
 		case 24:
-			t.cur.Attr.Mode &^= attrUnderline
+			t.cur.Attr.Mode &^= AttrUnderline
 		case 25, 26:
-			t.cur.Attr.Mode &^= attrBlink
+			t.cur.Attr.Mode &^= AttrBlink
 		case 27:
-			t.cur.Attr.Mode &^= attrReverse
+			t.cur.Attr.Mode &^= AttrReverse
 		case 38:
 			if i+2 < len(attr) && attr[i+1] == 5 {
 				i += 2

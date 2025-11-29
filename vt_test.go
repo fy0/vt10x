@@ -82,7 +82,7 @@ func TestSGRFaint(t *testing.T) {
 		t.Fatal(err)
 	}
 	attr := term.Cell(0, 0)
-	if attr.Mode&attrFaint == 0 {
+	if attr.Mode&AttrFaint == 0 {
 		t.Fatal("expected faint attribute on cell")
 	}
 	base := byte2color(2)

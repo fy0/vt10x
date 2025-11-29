@@ -7,14 +7,14 @@ func isControlCode(c rune) bool {
 func (t *State) parse(c rune) {
 	t.logf("%q", string(c))
 	if isControlCode(c) {
-		if t.handleControlCodes(c) || t.cur.Attr.Mode&attrGfx == 0 {
+		if t.handleControlCodes(c) || t.cur.Attr.Mode&AttrGfx == 0 {
 			return
 		}
 	}
 	// TODO: update selection; see st.c:2450
 
 	if t.mode&ModeWrap != 0 && t.cur.State&cursorWrapNext != 0 {
-		t.lines[t.cur.Y][t.cur.X].Mode |= attrWrap
+		t.lines[t.cur.Y][t.cur.X].Mode |= AttrWrap
 		t.newline(true)
 	}
 
@@ -132,9 +132,9 @@ func (t *State) parseEscAltCharset(c rune) {
 	t.logf("%q", string(c))
 	switch c {
 	case '0': // line drawing set
-		t.cur.Attr.Mode |= attrGfx
+		t.cur.Attr.Mode |= AttrGfx
 	case 'B': // USASCII
-		t.cur.Attr.Mode &^= attrGfx
+		t.cur.Attr.Mode &^= AttrGfx
 	case 'A', // UK (ignored)
 		'<', // multinational (ignored)
 		'5', // Finnish (ignored)
