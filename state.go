@@ -19,6 +19,8 @@ const (
 	AttrBlink
 	AttrWrap
 	AttrFaint
+	AttrWide     // Wide character (occupies 2 cells)
+	AttrWideDummy // Placeholder for second cell of wide character
 )
 
 const (

@@ -1,5 +1,7 @@
 package vt10x
 
+import "github.com/mattn/go-runewidth"
+
 func isControlCode(c rune) bool {
 	return c < 0x20 || c == 0177
 }
@@ -23,9 +25,62 @@ func (t *State) parse(c rune) {
 		t.logln("insert mode not implemented")
 	}
 
-	t.setChar(c, &t.cur.Attr, t.cur.X, t.cur.Y)
-	if t.cur.X+1 < t.cols {
-		t.moveTo(t.cur.X+1, t.cur.Y)
+	width := runewidth.RuneWidth(c)
+	if width == 0 {
+		width = 1 // Treat zero-width as 1 for safety
+	}
+
+	// For wide characters, check if we have room for both cells
+	if width == 2 && t.cur.X+1 >= t.cols {
+		// Not enough room for wide char, wrap to next line first
+		if t.mode&ModeWrap != 0 {
+			t.lines[t.cur.Y][t.cur.X].Mode |= AttrWrap
+			t.newline(true)
+		} else {
+			// Can't fit, just return
+			return
+		}
+	}
+
+	// Clear any existing wide character that would be partially overwritten
+	// If we're writing over the dummy part of a wide char, clear the main part
+	if t.cur.X > 0 && t.lines[t.cur.Y][t.cur.X].Mode&AttrWideDummy != 0 {
+		t.lines[t.cur.Y][t.cur.X-1].Char = ' '
+		t.lines[t.cur.Y][t.cur.X-1].Mode &^= AttrWide
+		t.dirty[t.cur.Y] = true
+	}
+	// If we're writing over a wide char, also clear its dummy part
+	if t.lines[t.cur.Y][t.cur.X].Mode&AttrWide != 0 && t.cur.X+1 < t.cols {
+		t.lines[t.cur.Y][t.cur.X+1].Char = ' '
+		t.lines[t.cur.Y][t.cur.X+1].Mode &^= AttrWideDummy
+		t.dirty[t.cur.Y] = true
+	}
+	// For 2-width chars, also check if we'd overwrite a wide char's first half with our dummy
+	if width == 2 && t.cur.X+1 < t.cols {
+		if t.lines[t.cur.Y][t.cur.X+1].Mode&AttrWide != 0 && t.cur.X+2 < t.cols {
+			t.lines[t.cur.Y][t.cur.X+2].Char = ' '
+			t.lines[t.cur.Y][t.cur.X+2].Mode &^= AttrWideDummy
+			t.dirty[t.cur.Y] = true
+		}
+	}
+
+	// Set the main character
+	attr := t.cur.Attr
+	if width == 2 {
+		attr.Mode |= AttrWide
+	}
+	t.setChar(c, &attr, t.cur.X, t.cur.Y)
+
+	// For wide characters, set placeholder in second cell
+	if width == 2 && t.cur.X+1 < t.cols {
+		dummyAttr := t.cur.Attr
+		dummyAttr.Mode |= AttrWideDummy
+		t.setChar(' ', &dummyAttr, t.cur.X+1, t.cur.Y)
+	}
+
+	// Move cursor by character width
+	if t.cur.X+width < t.cols {
+		t.moveTo(t.cur.X+width, t.cur.Y)
 	} else {
 		t.cur.State |= cursorWrapNext
 	}
