@@ -1,6 +1,6 @@
 package vt10x
 
-import "github.com/mattn/go-runewidth"
+import "github.com/rivo/uniseg"
 
 func isControlCode(c rune) bool {
 	return c < 0x20 || c == 0177
@@ -25,7 +25,7 @@ func (t *State) parse(c rune) {
 		t.logln("insert mode not implemented")
 	}
 
-	width := runewidth.RuneWidth(c)
+	width := uniseg.StringWidth(string(c))
 	if width == 0 {
 		width = 1 // Treat zero-width as 1 for safety
 	}
