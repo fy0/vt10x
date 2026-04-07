@@ -19,7 +19,7 @@ const (
 	AttrBlink
 	AttrWrap
 	AttrFaint
-	AttrWide     // Wide character (occupies 2 cells)
+	AttrWide      // Wide character (occupies 2 cells)
 	AttrWideDummy // Placeholder for second cell of wide character
 )
 
@@ -96,12 +96,17 @@ type State struct {
 	anydirty      bool
 	cur, curSaved Cursor
 	top, bottom   int // scroll limits
+	otherCur      Cursor
+	otherCurSaved Cursor
+	otherTop      int
+	otherBottom   int
 	mode          ModeFlag
 	state         parseState
 	str           strEscape
 	csi           csiEscape
 	numlock       bool
 	tabs          []bool
+	otherTabs     []bool
 	title         string
 	colorOverride map[Color]Color
 }
@@ -206,6 +211,78 @@ func (t *State) resetChanges() {
 	t.changed = 0
 }
 
+func (t *State) resetTabs(tabs []bool) {
+	for i := range tabs {
+		tabs[i] = false
+	}
+	for i := tabspaces; i < len(tabs); i += tabspaces {
+		tabs[i] = true
+	}
+}
+
+func (t *State) resizeTabs(tabs []bool, oldCols, newCols int) []bool {
+	resized := make([]bool, newCols)
+	if len(tabs) == 0 || oldCols <= 0 {
+		t.resetTabs(resized)
+		return resized
+	}
+
+	copy(resized, tabs)
+	if newCols <= oldCols {
+		return resized
+	}
+
+	lastStop := oldCols - 1
+	if lastStop >= len(tabs) {
+		lastStop = len(tabs) - 1
+	}
+	for lastStop > 0 && !tabs[lastStop] {
+		lastStop--
+	}
+	for lastStop += tabspaces; lastStop < newCols; lastStop += tabspaces {
+		resized[lastStop] = true
+	}
+	return resized
+}
+
+func (t *State) fillBuffer(lines []line, attr Glyph) {
+	for y := range lines {
+		for x := range lines[y] {
+			lines[y][x] = attr
+			lines[y][x].Char = ' '
+		}
+	}
+}
+
+func (t *State) resetInactiveScreen(fill Glyph, cursor Cursor) {
+	t.fillBuffer(t.altLines, fill)
+	t.otherCur = cursor
+	t.otherCurSaved = t.defaultCursor()
+	t.otherTop = 0
+	t.otherBottom = t.rows - 1
+	if len(t.otherTabs) != t.cols {
+		t.otherTabs = make([]bool, t.cols)
+	}
+	t.resetTabs(t.otherTabs)
+}
+
+func (t *State) clampCursor(cur *Cursor, top, bottom int) {
+	cur.X = clamp(cur.X, 0, t.cols-1)
+
+	minY := 0
+	maxY := t.rows - 1
+	if cur.State&cursorOrigin != 0 {
+		minY = top
+		maxY = bottom
+	}
+	cur.Y = clamp(cur.Y, minY, maxY)
+}
+
+func (t *State) clampSavedCursor(cur *Cursor) {
+	cur.X = clamp(cur.X, 0, t.cols-1)
+	cur.Y = clamp(cur.Y, 0, t.rows-1)
+}
+
 func (t *State) saveCursor() {
 	t.curSaved = t.cur
 }
@@ -308,17 +385,21 @@ func (t *State) defaultCursor() Cursor {
 
 func (t *State) reset() {
 	t.cur = t.defaultCursor()
-	t.saveCursor()
-	for i := range t.tabs {
-		t.tabs[i] = false
-	}
-	for i := tabspaces; i < len(t.tabs); i += tabspaces {
-		t.tabs[i] = true
-	}
+	t.curSaved = t.cur
+	t.resetTabs(t.tabs)
 	t.top = 0
 	t.bottom = t.rows - 1
+	t.otherCur = t.defaultCursor()
+	t.otherCurSaved = t.otherCur
+	t.otherTop = 0
+	t.otherBottom = t.rows - 1
+	if len(t.otherTabs) != t.cols {
+		t.otherTabs = make([]bool, t.cols)
+	}
+	t.resetTabs(t.otherTabs)
 	t.mode = ModeWrap
-	t.clear(0, 0, t.rows-1, t.cols-1)
+	t.clear(0, 0, t.cols-1, t.rows-1)
+	t.fillBuffer(t.altLines, t.otherCur.Attr)
 	t.moveTo(0, 0)
 }
 
@@ -336,11 +417,12 @@ func (t *State) resize(cols, rows int) bool {
 		copy(t.altLines, t.altLines[slide:slide+rows])
 	}
 
-	lines, altLines, tabs := t.lines, t.altLines, t.tabs
+	lines, altLines, tabs, otherTabs := t.lines, t.altLines, t.tabs, t.otherTabs
 	t.lines = make([]line, rows)
 	t.altLines = make([]line, rows)
 	t.dirty = make([]bool, rows)
-	t.tabs = make([]bool, cols)
+	t.tabs = t.resizeTabs(tabs, t.cols, cols)
+	t.otherTabs = t.resizeTabs(otherTabs, t.cols, cols)
 
 	minrows := min(rows, t.rows)
 	mincols := min(cols, t.cols)
@@ -354,21 +436,16 @@ func (t *State) resize(cols, rows int) bool {
 		copy(t.lines[i], lines[i])
 		copy(t.altLines[i], altLines[i])
 	}
-	copy(t.tabs, tabs)
-	if cols > t.cols {
-		i := t.cols - 1
-		for i > 0 && !tabs[i] {
-			i--
-		}
-		for i += tabspaces; i < len(tabs); i += tabspaces {
-			tabs[i] = true
-		}
-	}
 
 	t.cols = cols
 	t.rows = rows
 	t.setScroll(0, rows-1)
-	t.moveTo(t.cur.X, t.cur.Y)
+	t.otherTop = 0
+	t.otherBottom = rows - 1
+	t.clampCursor(&t.cur, t.top, t.bottom)
+	t.clampSavedCursor(&t.curSaved)
+	t.clampCursor(&t.otherCur, t.otherTop, t.otherBottom)
+	t.clampSavedCursor(&t.otherCurSaved)
 	for i := 0; i < 2; i++ {
 		if mincols < cols && minrows > 0 {
 			t.clear(mincols, 0, cols-1, minrows-1)
@@ -432,6 +509,11 @@ func (t *State) moveTo(x, y int) {
 
 func (t *State) swapScreen() {
 	t.lines, t.altLines = t.altLines, t.lines
+	t.cur, t.otherCur = t.otherCur, t.cur
+	t.curSaved, t.otherCurSaved = t.otherCurSaved, t.curSaved
+	t.top, t.otherTop = t.otherTop, t.top
+	t.bottom, t.otherBottom = t.otherBottom, t.bottom
+	t.tabs, t.otherTabs = t.otherTabs, t.tabs
 	t.mode ^= ModeAltScreen
 	t.dirtyAll()
 }
@@ -569,25 +651,43 @@ func (t *State) setMode(priv bool, set bool, args []int) {
 				t.modMode(set, ModeMouseSgr)
 			case 1034:
 				t.modMode(set, Mode8bit)
-			case 1049, // = 1047 and 1048
-				47, 1047:
+			case 47, 1047:
 				alt := t.mode&ModeAltScreen != 0
-				if alt {
-					t.clear(0, 0, t.cols-1, t.rows-1)
-				}
-				if !set || !alt {
-					t.swapScreen()
-				}
-				if a != 1049 {
+				if set {
+					if !alt {
+						t.resetInactiveScreen(t.cur.Attr, t.cur)
+						t.swapScreen()
+					}
 					break
 				}
-				fallthrough
+				if alt {
+					t.swapScreen()
+					t.resetInactiveScreen(t.defaultCursor().Attr, t.defaultCursor())
+				}
+				break
+			case 1049:
+				alt := t.mode&ModeAltScreen != 0
+				if set {
+					t.saveCursor()
+					if !alt {
+						t.resetInactiveScreen(t.cur.Attr, t.cur)
+						t.swapScreen()
+					}
+					break
+				}
+				if alt {
+					t.swapScreen()
+					t.restoreCursor()
+					t.resetInactiveScreen(t.defaultCursor().Attr, t.defaultCursor())
+				}
+				break
 			case 1048:
 				if set {
 					t.saveCursor()
 				} else {
 					t.restoreCursor()
 				}
+				break
 			case 1001:
 				// mouse highlight mode; can hang the terminal by design when
 				// implemented

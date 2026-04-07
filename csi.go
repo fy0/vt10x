@@ -9,16 +9,18 @@ import (
 // CSI (Control Sequence Introducer)
 // ESC+[
 type csiEscape struct {
-	buf  []byte
-	args []int
-	mode byte
-	priv bool
+	buf    []byte
+	args   []int
+	mode   byte
+	prefix byte
+	priv   bool
 }
 
 func (c *csiEscape) reset() {
 	c.buf = c.buf[:0]
 	c.args = c.args[:0]
 	c.mode = 0
+	c.prefix = 0
 	c.priv = false
 }
 
@@ -38,8 +40,9 @@ func (c *csiEscape) parse() {
 	}
 	s := string(c.buf)
 	c.args = c.args[:0]
-	if s[0] == '?' {
-		c.priv = true
+	if s[0] == '?' || s[0] == '>' || s[0] == '<' || s[0] == '=' {
+		c.prefix = s[0]
+		c.priv = s[0] == '?'
 		s = s[1:]
 	}
 	s = s[:len(s)-1]
@@ -78,8 +81,12 @@ func (t *State) handleCSI() {
 	case 'B', 'e': // CUD, VPR - cursor <n> down
 		t.moveTo(t.cur.X, t.cur.Y+c.maxarg(0, 1))
 	case 'c': // DA - device attributes
-		if c.arg(0, 0) == 0 {
-			// TODO: write vt102 id
+		if c.prefix == 0 && c.arg(0, 0) == 0 {
+			// Reply with an xterm-style primary DA for compatibility with modern TUIs.
+			// Strict VT102 would traditionally report ESC[?6c here.
+			_, _ = t.w.Write([]byte("\033[?1;2c"))
+		} else {
+			goto unknown
 		}
 	case 'C', 'a': // CUF, HPR - cursor <n> forward
 		t.moveTo(t.cur.X+c.maxarg(0, 1), t.cur.Y)
@@ -178,8 +185,14 @@ func (t *State) handleCSI() {
 			t.moveAbsTo(0, 0)
 		}
 	case 's': // DECSC - save cursor position (ANSI.SYS)
+		if c.priv || c.prefix != 0 {
+			goto unknown
+		}
 		t.saveCursor()
 	case 'u': // DECRC - restore cursor position (ANSI.SYS)
+		if c.priv || c.prefix != 0 {
+			goto unknown
+		}
 		t.restoreCursor()
 	}
 	return
