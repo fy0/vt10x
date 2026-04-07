@@ -162,6 +162,7 @@ func (t *State) parseEscStr(c rune) {
 	case '\033':
 		t.state = t.parseEscStrEnd
 	case '\a': // backwards compatiblity to xterm
+		t.str.useST = false
 		t.state = t.parse
 		t.handleSTR()
 	default:
@@ -176,6 +177,7 @@ func (t *State) parseEscStrEnd(c rune) {
 	t.logf("%q", string(c))
 	t.state = t.parse
 	if c == '\\' {
+		t.str.useST = true
 		t.handleSTR()
 	}
 }

@@ -1,8 +1,15 @@
 package vt10x
 
 import (
+	"bytes"
+	"fmt"
 	"testing"
 )
+
+func oscColorReply(num int, c Color, term string) string {
+	r, g, b := rgb(int(c))
+	return fmt.Sprintf("\033]%d;rgb:%02x%02x/%02x%02x/%02x%02x%s", num, r, r, g, g, b, b, term)
+}
 
 func TestSTRParse(t *testing.T) {
 	var str strEscape
@@ -168,5 +175,45 @@ func TestParseColor(t *testing.T) {
 				t.Fatalf("expected (%d, %d, %d), got (%d, %d, %d)", tc.r, tc.g, tc.b, r, g, b)
 			}
 		})
+	}
+}
+
+func TestOSCColorQueriesReplyWithMatchingTerminator(t *testing.T) {
+	var reply bytes.Buffer
+	term := New(WithWriter(&reply))
+
+	writeAll(t, term, "\033]10;?\a\033]11;?\033\\\033]12;?\a")
+
+	expected := oscColorReply(10, byte2color(int(LightGrey)), "\a") +
+		oscColorReply(11, byte2color(int(Black)), "\033\\") +
+		oscColorReply(12, byte2color(int(LightGrey)), "\a")
+	if got := reply.String(); got != expected {
+		t.Fatalf("unexpected OSC color replies: %q", got)
+	}
+}
+
+func TestOSC4ColorQueryUsesPaletteIndex(t *testing.T) {
+	var reply bytes.Buffer
+	term := New(WithWriter(&reply))
+
+	writeAll(t, term, "\033]4;1;rgb:12/34/56\a")
+	reply.Reset()
+	writeAll(t, term, "\033]4;1;?\a")
+
+	if got := reply.String(); got != "\033]4;1;rgb:1212/3434/5656\a" {
+		t.Fatalf("unexpected OSC 4 color reply: %q", got)
+	}
+}
+
+func TestOSCCursorColorSetAndQuery(t *testing.T) {
+	var reply bytes.Buffer
+	term := New(WithWriter(&reply))
+
+	writeAll(t, term, "\033]12;rgb:01/23/45\a")
+	reply.Reset()
+	writeAll(t, term, "\033]12;?\033\\")
+
+	if got := reply.String(); got != "\033]12;rgb:0101/2323/4545\033\\" {
+		t.Fatalf("unexpected OSC 12 color reply: %q", got)
 	}
 }

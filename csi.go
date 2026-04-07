@@ -71,6 +71,13 @@ func (c *csiEscape) maxarg(i, def int) int {
 
 func (t *State) handleCSI() {
 	c := &t.csi
+	if c.prefix != 0 {
+		if t.handlePrefixedCSI() {
+			return
+		}
+		goto unknown
+	}
+
 	switch c.mode {
 	default:
 		goto unknown
@@ -81,7 +88,7 @@ func (t *State) handleCSI() {
 	case 'B', 'e': // CUD, VPR - cursor <n> down
 		t.moveTo(t.cur.X, t.cur.Y+c.maxarg(0, 1))
 	case 'c': // DA - device attributes
-		if c.prefix == 0 && c.arg(0, 0) == 0 {
+		if c.arg(0, 0) == 0 {
 			// Reply with an xterm-style primary DA for compatibility with modern TUIs.
 			// Strict VT102 would traditionally report ESC[?6c here.
 			_, _ = t.w.Write([]byte("\033[?1;2c"))
@@ -152,7 +159,7 @@ func (t *State) handleCSI() {
 	case 'L': // IL - insert <n> blank lines
 		t.insertBlankLines(c.arg(0, 1))
 	case 'l': // RM - reset mode
-		t.setMode(c.priv, false, c.args)
+		t.setMode(false, false, c.args)
 	case 'M': // DL - delete <n> lines
 		t.deleteLines(c.arg(0, 1))
 	case 'X': // ECH - erase <n> chars
@@ -167,7 +174,7 @@ func (t *State) handleCSI() {
 	case 'd': // VPA - move to <row>
 		t.moveAbsTo(t.cur.X, c.arg(0, 1)-1)
 	case 'h': // SM - set terminal mode
-		t.setMode(c.priv, true, c.args)
+		t.setMode(false, true, c.args)
 	case 'm': // SGR - terminal attribute (color)
 		t.setAttr(c.args)
 	case 'n':
@@ -176,27 +183,58 @@ func (t *State) handleCSI() {
 			t.w.Write([]byte("\033[0n"))
 		case 6: // CPR - cursor position report
 			t.w.Write([]byte(fmt.Sprintf("\033[%d;%dR", t.cur.Y+1, t.cur.X+1)))
+		default:
+			goto unknown
 		}
 	case 'r': // DECSTBM - set scrolling region
-		if c.priv {
-			goto unknown
-		} else {
-			t.setScroll(c.arg(0, 1)-1, c.arg(1, t.rows)-1)
-			t.moveAbsTo(0, 0)
-		}
+		t.setScroll(c.arg(0, 1)-1, c.arg(1, t.rows)-1)
+		t.moveAbsTo(0, 0)
 	case 's': // DECSC - save cursor position (ANSI.SYS)
-		if c.priv || c.prefix != 0 {
-			goto unknown
-		}
 		t.saveCursor()
 	case 'u': // DECRC - restore cursor position (ANSI.SYS)
-		if c.priv || c.prefix != 0 {
-			goto unknown
-		}
 		t.restoreCursor()
 	}
 	return
 unknown: // TODO: get rid of this goto
-	t.logf("unknown CSI sequence '%c'\n", c.mode)
+	t.logUnknownCSI(c)
 	// TODO: c.dump()
+}
+
+func (t *State) handlePrefixedCSI() bool {
+	c := &t.csi
+	switch c.prefix {
+	case '?':
+		switch c.mode {
+		case 'h':
+			t.setMode(true, true, c.args)
+			return true
+		case 'l':
+			t.setMode(true, false, c.args)
+			return true
+		case 'n':
+			switch c.arg(0, 0) {
+			case 6: // DECXCPR - DEC-specific cursor position report
+				_, _ = t.w.Write([]byte(fmt.Sprintf("\033[?%d;%dR", t.cur.Y+1, t.cur.X+1)))
+				return true
+			}
+		}
+	case '>':
+		switch c.mode {
+		case 'c': // DA2 - secondary device attributes
+			if c.arg(0, 0) == 0 {
+				_, _ = t.w.Write([]byte(t.secondaryDA))
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (t *State) logUnknownCSI(c *csiEscape) {
+	if c.prefix != 0 {
+		t.logf("unknown CSI sequence '%c%c'\n", c.prefix, c.mode)
+		return
+	}
+	t.logf("unknown CSI sequence '%c'\n", c.mode)
 }

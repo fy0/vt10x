@@ -1,6 +1,7 @@
 package vt10x
 
 import (
+	"bytes"
 	"io"
 	"strings"
 	"testing"
@@ -92,5 +93,64 @@ func TestSGRFaint(t *testing.T) {
 	expected := Color((r>>1)<<16 | (g>>1)<<8 | (b >> 1))
 	if attr.FG != expected {
 		t.Fatalf("expected faint color %06x, got %06x", expected, attr.FG)
+	}
+}
+
+func TestCodexStyleStartupTraceQueries(t *testing.T) {
+	var reply bytes.Buffer
+	term := New(WithWriter(&reply), WithSize(10, 5))
+	st := term.(*terminal)
+
+	writeAll(t, term, "HELLO\033[s\033[3;4H")
+
+	beforeCur := st.cur
+	beforeSaved := st.curSaved
+	beforeTop := st.top
+	beforeBottom := st.bottom
+	beforeMode := st.mode
+	beforeRows := []string{
+		rowString(term, 0),
+		rowString(term, 1),
+		rowString(term, 2),
+		rowString(term, 3),
+		rowString(term, 4),
+	}
+
+	writeAll(t, term, "\033[6n\033[c\033]10;?\033\\\033]11;?\033\\\033[?u\033[>7u\033[?6n\033[>c")
+
+	expected := "\033[3;4R" +
+		"\033[?1;2c" +
+		oscColorReply(10, byte2color(int(LightGrey)), "\033\\") +
+		oscColorReply(11, byte2color(int(Black)), "\033\\") +
+		"\033[?3;4R" +
+		"\033[>0;95;0c"
+	if got := reply.String(); got != expected {
+		t.Fatalf("unexpected startup trace replies: %q", got)
+	}
+
+	if st.cur != beforeCur {
+		t.Fatalf("cursor changed after startup trace: before=%+v after=%+v", beforeCur, st.cur)
+	}
+	if st.curSaved != beforeSaved {
+		t.Fatalf("saved cursor changed after startup trace: before=%+v after=%+v", beforeSaved, st.curSaved)
+	}
+	if st.top != beforeTop || st.bottom != beforeBottom {
+		t.Fatalf("scroll region changed after startup trace: before=(%d,%d) after=(%d,%d)", beforeTop, beforeBottom, st.top, st.bottom)
+	}
+	if st.mode != beforeMode {
+		t.Fatalf("mode changed after startup trace: before=%v after=%v", beforeMode, st.mode)
+	}
+
+	afterRows := []string{
+		rowString(term, 0),
+		rowString(term, 1),
+		rowString(term, 2),
+		rowString(term, 3),
+		rowString(term, 4),
+	}
+	for i := range beforeRows {
+		if afterRows[i] != beforeRows[i] {
+			t.Fatalf("row %d changed after startup trace: before=%q after=%q", i+1, beforeRows[i], afterRows[i])
+		}
 	}
 }

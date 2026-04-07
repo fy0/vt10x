@@ -109,12 +109,17 @@ type State struct {
 	otherTabs     []bool
 	title         string
 	colorOverride map[Color]Color
+	secondaryDA   string
 }
 
-func newState(w io.Writer) *State {
+func newState(w io.Writer, secondaryDA string) *State {
+	if secondaryDA == "" {
+		secondaryDA = defaultSecondaryDAReply
+	}
 	return &State{
 		w:             w,
 		colorOverride: make(map[Color]Color),
+		secondaryDA:   secondaryDA,
 	}
 }
 

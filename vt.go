@@ -58,9 +58,13 @@ type View interface {
 type TerminalOption func(*TerminalInfo)
 
 type TerminalInfo struct {
-	w          io.Writer
-	cols, rows int
+	w                io.Writer
+	cols, rows       int
+	secondaryDAReply string
 }
+
+const defaultSecondaryDAReply = "\033[>0;95;0c"
+const xtermStyleSecondaryDAReply = "\033[>0;276;0c"
 
 func WithWriter(w io.Writer) TerminalOption {
 	return func(info *TerminalInfo) {
@@ -75,12 +79,22 @@ func WithSize(cols, rows int) TerminalOption {
 	}
 }
 
+// WithXtermStyle enables vt10x's xterm-oriented compatibility profile.
+// Today this switches CSI > c (DA2) to an xterm.js-style identity string,
+// and the option may grow to cover additional xterm-compatible behavior.
+func WithXtermStyle() TerminalOption {
+	return func(info *TerminalInfo) {
+		info.secondaryDAReply = xtermStyleSecondaryDAReply
+	}
+}
+
 // New returns a new virtual terminal emulator.
 func New(opts ...TerminalOption) Terminal {
 	info := TerminalInfo{
-		w:    ioutil.Discard,
-		cols: 80,
-		rows: 24,
+		w:                ioutil.Discard,
+		cols:             80,
+		rows:             24,
+		secondaryDAReply: defaultSecondaryDAReply,
 	}
 	for _, opt := range opts {
 		opt(&info)

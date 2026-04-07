@@ -12,15 +12,17 @@ import (
 // as far as I can tell, don't really have a name; STR is the name I took from
 // suckless which I imagine comes from rxvt or xterm).
 type strEscape struct {
-	typ  rune
-	buf  []rune
-	args []string
+	typ   rune
+	buf   []rune
+	args  []string
+	useST bool
 }
 
 func (s *strEscape) reset() {
 	s.typ = 0
 	s.buf = s.buf[:0]
 	s.args = nil
+	s.useST = false
 }
 
 func (s *strEscape) put(c rune) {
@@ -54,6 +56,13 @@ func (s *strEscape) argString(i int, def string) string {
 		return def
 	}
 	return s.args[i]
+}
+
+func (s *strEscape) terminator() string {
+	if s.useST {
+		return "\033\\"
+	}
+	return "\a"
 }
 
 func (t *State) handleSTR() {
@@ -93,24 +102,24 @@ func (t *State) handleSTR() {
 			if p != nil && *p == "?" {
 				t.oscColorResponse(int(DefaultBG), 11)
 			} else if err := t.setColorName(int(DefaultBG), p); err != nil {
+				t.logf("invalid background color: %s\n", maybe(p))
+			} else {
+				// TODO: redraw
+			}
+		case 12:
+			if len(s.args) < 2 {
+				break
+			}
+
+			c := s.argString(1, "")
+			p := &c
+			if p != nil && *p == "?" {
+				t.oscColorResponse(int(DefaultCursor), 12)
+			} else if err := t.setColorName(int(DefaultCursor), p); err != nil {
 				t.logf("invalid cursor color: %s\n", maybe(p))
 			} else {
 				// TODO: redraw
 			}
-		// case 12:
-		// if len(s.args) < 2 {
-		// 	break
-		// }
-
-		// c := s.argString(1, "")
-		// p := &c
-		// if p != nil && *p == "?" {
-		// 	t.oscColorResponse(int(DefaultCursor), 12)
-		// } else if err := t.setColorName(int(DefaultCursor), p); err != nil {
-		// 	t.logf("invalid background color: %s\n", p)
-		// } else {
-		// 	// TODO: redraw
-		// }
 		case 4: // color set
 			if len(s.args) < 3 {
 				break
@@ -154,7 +163,7 @@ func (t *State) handleSTR() {
 }
 
 func (t *State) setColorName(j int, p *string) error {
-	if !between(j, 0, 1<<24) {
+	if !t.validColorSlot(j) {
 		return fmt.Errorf("invalid color value %d", j)
 	}
 
@@ -173,34 +182,76 @@ func (t *State) setColorName(j int, p *string) error {
 	return nil
 }
 
+func (t *State) validColorSlot(j int) bool {
+	if between(j, 0, 255) {
+		return true
+	}
+
+	switch Color(j) {
+	case DefaultFG, DefaultBG, DefaultCursor:
+		return true
+	}
+
+	return between(j, 0, 1<<24-1)
+}
+
 func (t *State) oscColorResponse(j, num int) {
-	if j < 0 {
+	c, ok := t.dynamicColorValue(j)
+	if !ok {
 		t.logf("failed to fetch osc color %d\n", j)
 		return
 	}
 
-	k, ok := t.colorOverride[Color(j)]
-	if ok {
-		j = int(k)
-	}
-
-	r, g, b := rgb(j)
-	t.w.Write([]byte(fmt.Sprintf("\033]%d;rgb:%02x%02x/%02x%02x/%02x%02x\007", num, r, r, g, g, b, b)))
+	r, g, b := rgb(c)
+	t.w.Write([]byte(fmt.Sprintf("\033]%d;rgb:%02x%02x/%02x%02x/%02x%02x%s", num, r, r, g, g, b, b, t.str.terminator())))
 }
 
 func (t *State) osc4ColorResponse(j int) {
-	if j < 0 {
+	c, ok := t.paletteColorValue(j)
+	if !ok {
 		t.logf("failed to fetch osc4 color %d\n", j)
 		return
 	}
 
-	k, ok := t.colorOverride[Color(j)]
-	if ok {
-		j = int(k)
+	r, g, b := rgb(c)
+	t.w.Write([]byte(fmt.Sprintf("\033]4;%d;rgb:%02x%02x/%02x%02x/%02x%02x%s", j, r, r, g, g, b, b, t.str.terminator())))
+}
+
+func (t *State) dynamicColorValue(j int) (int, bool) {
+	if j < 0 {
+		return 0, false
 	}
 
-	r, g, b := rgb(j)
-	t.w.Write([]byte(fmt.Sprintf("\033]4;%d;rgb:%02x%02x/%02x%02x/%02x%02x\007", j, r, r, g, g, b, b)))
+	if k, ok := t.colorOverride[Color(j)]; ok {
+		return int(k), true
+	}
+
+	switch Color(j) {
+	case DefaultFG:
+		return int(byte2color(int(LightGrey))), true
+	case DefaultBG:
+		return int(byte2color(int(Black))), true
+	case DefaultCursor:
+		return int(byte2color(int(LightGrey))), true
+	default:
+		if between(j, 0, 1<<24-1) {
+			return j, true
+		}
+	}
+
+	return 0, false
+}
+
+func (t *State) paletteColorValue(j int) (int, bool) {
+	if !between(j, 0, 255) {
+		return 0, false
+	}
+
+	if k, ok := t.colorOverride[Color(j)]; ok {
+		return int(k), true
+	}
+
+	return int(byte2color(j)), true
 }
 
 func rgb(j int) (r, g, b int) {
