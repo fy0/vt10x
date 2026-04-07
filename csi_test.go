@@ -41,6 +41,13 @@ func TestCSIParse(t *testing.T) {
 	if csi.mode != 'u' || csi.prefix != '>' || csi.priv || csi.arg(0, 0) != 7 || len(csi.args) != 1 {
 		t.Fatal("CSI parse mismatch")
 	}
+
+	csi.reset()
+	csi.buf = []byte("?2004$p")
+	csi.parse()
+	if csi.mode != 'p' || csi.prefix != '?' || csi.interm != "$" || !csi.priv || csi.arg(0, 0) != 2004 || len(csi.args) != 1 {
+		t.Fatal("CSI parse mismatch")
+	}
 }
 
 func TestXtermStylePrimaryDAResponse(t *testing.T) {
@@ -76,6 +83,17 @@ func TestConfigurableSecondaryDAResponse(t *testing.T) {
 	}
 	if got := reply.String(); got != "\033[>0;276;0c" {
 		t.Fatalf("unexpected configurable secondary DA response: %q", got)
+	}
+}
+
+func TestDECIDResponse(t *testing.T) {
+	var reply bytes.Buffer
+	term := New(WithWriter(&reply))
+	if _, err := term.Write([]byte("\033Z")); err != nil {
+		t.Fatal(err)
+	}
+	if got := reply.String(); got != "\033[?1;2c" {
+		t.Fatalf("unexpected DECID response: %q", got)
 	}
 }
 
@@ -128,5 +146,43 @@ func TestUnsupportedPrefixedCSIIsIgnored(t *testing.T) {
 	}
 	if st.mode != beforeMode {
 		t.Fatalf("mode changed after ignored prefixed CSI: before=%v after=%v", beforeMode, st.mode)
+	}
+}
+
+func TestPrivateModeReportForBracketedPaste(t *testing.T) {
+	var reply bytes.Buffer
+	term := New(WithWriter(&reply))
+
+	writeAll(t, term, "\033[?2004$p")
+	if got := reply.String(); got != "\033[?2004;2$y" {
+		t.Fatalf("unexpected initial DECRQM response: %q", got)
+	}
+
+	reply.Reset()
+	writeAll(t, term, "\033[?2004h\033[?2004$p")
+	if got := reply.String(); got != "\033[?2004;1$y" {
+		t.Fatalf("unexpected enabled DECRQM response: %q", got)
+	}
+
+	reply.Reset()
+	writeAll(t, term, "\033[?2004l\033[?2004$p\033[?2026$p")
+	if got := reply.String(); got != "\033[?2004;2$y\033[?2026;0$y" {
+		t.Fatalf("unexpected final DECRQM response: %q", got)
+	}
+}
+
+func TestANSIModeReportForInsertMode(t *testing.T) {
+	var reply bytes.Buffer
+	term := New(WithWriter(&reply))
+
+	writeAll(t, term, "\033[4$p")
+	if got := reply.String(); got != "\033[4;2$y" {
+		t.Fatalf("unexpected ANSI RMQ response: %q", got)
+	}
+
+	reply.Reset()
+	writeAll(t, term, "\033[4h\033[4$p")
+	if got := reply.String(); got != "\033[4;1$y" {
+		t.Fatalf("unexpected enabled ANSI RMQ response: %q", got)
 	}
 }

@@ -13,6 +13,7 @@ type csiEscape struct {
 	args   []int
 	mode   byte
 	prefix byte
+	interm string
 	priv   bool
 }
 
@@ -21,6 +22,7 @@ func (c *csiEscape) reset() {
 	c.args = c.args[:0]
 	c.mode = 0
 	c.prefix = 0
+	c.interm = ""
 	c.priv = false
 }
 
@@ -38,15 +40,25 @@ func (c *csiEscape) parse() {
 	if len(c.buf) == 1 {
 		return
 	}
-	s := string(c.buf)
+	b := c.buf[:len(c.buf)-1]
 	c.args = c.args[:0]
-	if s[0] == '?' || s[0] == '>' || s[0] == '<' || s[0] == '=' {
-		c.prefix = s[0]
-		c.priv = s[0] == '?'
-		s = s[1:]
+	if len(b) > 0 && (b[0] == '?' || b[0] == '>' || b[0] == '<' || b[0] == '=') {
+		c.prefix = b[0]
+		c.priv = b[0] == '?'
+		b = b[1:]
 	}
-	s = s[:len(s)-1]
-	ss := strings.Split(s, ";")
+	params := b
+	for i, ch := range b {
+		if (ch < '0' || ch > '9') && ch != ';' {
+			params = b[:i]
+			c.interm = string(b[i:])
+			break
+		}
+	}
+	if len(params) == 0 {
+		return
+	}
+	ss := strings.Split(string(params), ";")
 	for _, p := range ss {
 		i, err := strconv.Atoi(p)
 		if err != nil {
@@ -71,6 +83,13 @@ func (c *csiEscape) maxarg(i, def int) int {
 
 func (t *State) handleCSI() {
 	c := &t.csi
+	if c.interm != "" {
+		if t.handleIntermediateCSI() {
+			return
+		}
+		goto unknown
+	}
+
 	if c.prefix != 0 {
 		if t.handlePrefixedCSI() {
 			return
@@ -89,9 +108,7 @@ func (t *State) handleCSI() {
 		t.moveTo(t.cur.X, t.cur.Y+c.maxarg(0, 1))
 	case 'c': // DA - device attributes
 		if c.arg(0, 0) == 0 {
-			// Reply with an xterm-style primary DA for compatibility with modern TUIs.
-			// Strict VT102 would traditionally report ESC[?6c here.
-			_, _ = t.w.Write([]byte("\033[?1;2c"))
+			t.replyPrimaryDA()
 		} else {
 			goto unknown
 		}
@@ -200,6 +217,23 @@ unknown: // TODO: get rid of this goto
 	// TODO: c.dump()
 }
 
+func (t *State) handleIntermediateCSI() bool {
+	c := &t.csi
+	switch c.interm {
+	case "$":
+		switch c.mode {
+		case 'p': // DECRQM / ANSI RMQ - request mode
+			if len(c.args) == 0 {
+				return false
+			}
+			t.replyMode(c.priv, c.arg(0, 0), t.modeStatus(c.priv, c.arg(0, 0)))
+			return true
+		}
+	}
+
+	return false
+}
+
 func (t *State) handlePrefixedCSI() bool {
 	c := &t.csi
 	switch c.prefix {
@@ -231,9 +265,82 @@ func (t *State) handlePrefixedCSI() bool {
 	return false
 }
 
+func (t *State) replyPrimaryDA() {
+	// Reply with an xterm-style primary DA for compatibility with modern TUIs.
+	// Strict VT102 would traditionally report ESC[?6c here.
+	_, _ = t.w.Write([]byte("\033[?1;2c"))
+}
+
+func (t *State) replyMode(priv bool, mode, status int) {
+	prefix := ""
+	if priv {
+		prefix = "?"
+	}
+	_, _ = t.w.Write([]byte(fmt.Sprintf("\033[%s%d;%d$y", prefix, mode, status)))
+}
+
+func (t *State) modeStatus(priv bool, mode int) int {
+	set := false
+	known := true
+
+	if priv {
+		switch mode {
+		case 1:
+			set = t.mode&ModeAppCursor != 0
+		case 6:
+			set = t.cur.State&cursorOrigin != 0
+		case 7:
+			set = t.mode&ModeWrap != 0
+		case 25:
+			set = t.mode&ModeHide == 0
+		case 47, 1047, 1049:
+			set = t.mode&ModeAltScreen != 0
+		case 66:
+			set = t.mode&ModeAppKeypad != 0
+		case 1000:
+			set = t.mode&ModeMouseButton != 0
+		case 1002:
+			set = t.mode&ModeMouseMotion != 0
+		case 1003:
+			set = t.mode&ModeMouseMany != 0
+		case 1004:
+			set = t.mode&ModeFocus != 0
+		case 1006:
+			set = t.mode&ModeMouseSgr != 0
+		case 1034:
+			set = t.mode&Mode8bit != 0
+		case 2004:
+			set = t.mode&ModeBracketedPaste != 0
+		default:
+			known = false
+		}
+	} else {
+		switch mode {
+		case 2:
+			set = t.mode&ModeKeyboardLock != 0
+		case 4:
+			set = t.mode&ModeInsert != 0
+		case 12:
+			set = t.mode&ModeEcho != 0
+		case 20:
+			set = t.mode&ModeCRLF != 0
+		default:
+			known = false
+		}
+	}
+
+	if !known {
+		return 0
+	}
+	if set {
+		return 1
+	}
+	return 2
+}
+
 func (t *State) logUnknownCSI(c *csiEscape) {
-	if c.prefix != 0 {
-		t.logf("unknown CSI sequence '%c%c'\n", c.prefix, c.mode)
+	if c.prefix != 0 || c.interm != "" {
+		t.logf("unknown CSI sequence '%c%s%c'\n", c.prefix, c.interm, c.mode)
 		return
 	}
 	t.logf("unknown CSI sequence '%c'\n", c.mode)

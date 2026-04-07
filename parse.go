@@ -127,7 +127,7 @@ func (t *State) parseEsc(c rune) {
 			t.moveTo(t.cur.X, t.cur.Y-1)
 		}
 	case 'Z': // DECID - identify terminal
-		// TODO: write to our writer our id
+		t.replyPrimaryDA()
 	case 'c': // RIS - reset to initial state
 		t.reset()
 	case '=': // DECPAM - application keypad

@@ -19,9 +19,12 @@ set of xterm-style startup and query behaviors used by modern TUIs.
 Currently supported xterm-oriented behavior includes:
 
 - `CSI c` primary DA reply with an xterm-style `ESC[?1;2c` response.
+- `ESC Z` DECID compatibility, mapped to the same primary DA reply.
 - `CSI > c` secondary DA reply, conservative by default and xterm.js-like
   when `WithXtermStyle()` is enabled.
 - `CSI 6n` CPR and `CSI ? 6n` DECXCPR cursor position reports.
+- `CSI Ps $ p` and `CSI ? Ps $ p` request-mode reports for supported ANSI and
+  DEC private modes, including bracketed paste and focus reporting.
 - `OSC 10;?`, `OSC 11;?`, and `OSC 12;?` foreground/background/cursor
   color queries.
 - OSC color replies that mirror the incoming BEL vs ST terminator.

@@ -154,3 +154,40 @@ func TestCodexStyleStartupTraceQueries(t *testing.T) {
 		}
 	}
 }
+
+func TestStartupTraceModeQueriesDoNotChangeScreenState(t *testing.T) {
+	var reply bytes.Buffer
+	term := New(WithWriter(&reply), WithSize(10, 3))
+	st := term.(*terminal)
+
+	writeAll(t, term, "abc\033[s\033[2;2H")
+	beforeCur := st.cur
+	beforeSaved := st.curSaved
+	beforeMode := st.mode
+	beforeTop := st.top
+	beforeBottom := st.bottom
+	beforeRows := []string{rowString(term, 0), rowString(term, 1), rowString(term, 2)}
+
+	writeAll(t, term, "\033[?2004$p\033[?1004$p\033[4$p\033[?2026$p")
+
+	if got := reply.String(); got != "\033[?2004;2$y\033[?1004;2$y\033[4;2$y\033[?2026;0$y" {
+		t.Fatalf("unexpected mode query replies: %q", got)
+	}
+	if st.cur != beforeCur {
+		t.Fatalf("cursor changed after mode queries: before=%+v after=%+v", beforeCur, st.cur)
+	}
+	if st.curSaved != beforeSaved {
+		t.Fatalf("saved cursor changed after mode queries: before=%+v after=%+v", beforeSaved, st.curSaved)
+	}
+	if st.mode != beforeMode {
+		t.Fatalf("mode changed after mode queries: before=%v after=%v", beforeMode, st.mode)
+	}
+	if st.top != beforeTop || st.bottom != beforeBottom {
+		t.Fatalf("scroll region changed after mode queries: before=(%d,%d) after=(%d,%d)", beforeTop, beforeBottom, st.top, st.bottom)
+	}
+	for i, want := range beforeRows {
+		if got := rowString(term, i); got != want {
+			t.Fatalf("row %d changed after mode queries: before=%q after=%q", i+1, want, got)
+		}
+	}
+}
